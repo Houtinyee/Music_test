@@ -51,7 +51,8 @@ button, select, input, textarea { font: inherit; color: inherit; }
 .hear { display: flex; align-items: center; gap: 10px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 6px 12px; min-width: 250px; }
 .hear-note { font: 600 22px/1 var(--mono); min-width: 58px; }
 .hear-cents { font: 500 12px var(--mono); color: var(--muted); min-width: 52px; }
-.meter { flex: 1; height: 8px; background: var(--surface2); border-radius: 4px; overflow: hidden; min-width: 60px; }
+.meter { position: relative; flex: 1; height: 8px; background: var(--surface2); border-radius: 4px; overflow: hidden; min-width: 60px; }
+.meter b { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--text); opacity: .7; left: 0; }
 .meter i { display: block; height: 100%; width: 0; background: var(--good); transition: width .06s linear; }
 .hear.off { opacity: .6; }
 .hear.off .hear-note { font: 500 13px var(--sans); }
@@ -192,7 +193,7 @@ body.focus .transport > select, body.focus .transport > label.chk { display: non
     <div class="hear off" id="hear" title="What the microphone is hearing right now">
       <span class="hear-note" id="hearNote">Mic off</span>
       <span class="hear-cents" id="hearCents"></span>
-      <div class="meter"><i id="meterFill"></i></div>
+      <div class="meter"><i id="meterFill"></i><b id="meterGate"></b></div>
     </div>
   </header>
 
@@ -295,10 +296,10 @@ body.focus .transport > select, body.focus .transport > label.chk { display: non
             <span class="note" id="micState">Off</span>
           </div>
           <p class="msg" id="micMsg"></p>
-          <div class="field"><label for="gate">Noise gate</label><input type="range" id="gate" min="-60" max="-25" step="1" value="-44"><output id="gateVal"></output></div>
+          <div class="field"><label for="gate">Sensitivity floor</label><input type="range" id="gate" min="-72" max="-35" step="1" value="-60"><output id="gateVal"></output></div>
           <div class="field"><label for="tol">Timing window</label><input type="range" id="tol" min="80" max="450" step="10" value="200"><output id="tolVal"></output></div>
           <div class="field"><label for="lat">Input delay</label><input type="range" id="lat" min="0" max="300" step="5" value="0"><output id="latVal"></output></div>
-          <p class="note">Plug in or place the mic close to the amp. Pick the noise gate so the meter stays quiet between notes. If you are graded “late” on every note, raise Input delay to match. Single notes are graded by pitch. On guitar, chords are checked as a whole: the app listens to the strum and tells you if it hears a different chord, a wrong note or a missing one.</p>
+          <p class="note">Plug in or place the mic close to the amp. The app measures the room noise by itself and listens just above it, so quiet playing works; the white tick on the meter is the level a note has to pass. Raise the sensitivity floor only if it still reacts to noise. If you are graded “late” on every note, raise Input delay to match. Single notes are graded by pitch. On guitar, chords are checked as a whole: the app listens to the strum and tells you if it hears a different chord, a wrong note or a missing one.</p>
         </div>
         <div class="group">
           <label class="chk"><input type="checkbox" id="loopOn"> <b>Loop a section</b></label>
@@ -571,7 +572,7 @@ const S = {
   anchorBeat: 0, anchorTime: 0, beatNow: 0, cursor: 0, nextClick: 0, nextEv: 0,
   countIn: true, metro: true, listen: false,
   loopOn: false, loopFrom: 1, loopTo: 1,
-  pxPerBeat: 110, tolMs: 200, latMs: 0, gateDb: -44,
+  pxPerBeat: 110, tolMs: 200, latMs: 0, gateDb: -60,
   waitIdx: 0, waitArrive: 0, waitWrong: 0,
   passFrom: 0, passTo: Infinity, passNo: 0,
   flash: null, gp: null,
@@ -1051,7 +1052,7 @@ async function enableMic() {
     const chordAn = ctx.createAnalyser(); // longer window for hearing chords
     chordAn.fftSize = 8192; chordAn.smoothingTimeConstant = 0;
     src.connect(chordAn);
-    Object.assign(S.mic, { on: true, stream, src, an, chordAn, chordBuf: new Float32Array(8192), buf: new Float32Array(an.fftSize), prevRms: 0, level: 0, lastOnset: -1, cand: null });
+    Object.assign(S.mic, { on: true, stream, src, an, chordAn, chordBuf: new Float32Array(8192), buf: new Float32Array(an.fftSize), prevRms: 0, level: 0, lastOnset: -1, cand: null, noise: null, rmsHist: [], hfHist: [] });
     S.mic.timer = setInterval(micPoll, 25);
     $('#micBtn').textContent = 'Turn microphone off';
     $('#micState').textContent = 'Listening';
@@ -1083,7 +1084,7 @@ function configureAnalyser() {
   if (!m.on || !m.an) return;
   m.an.fftSize = INST().fft;
   m.buf = new Float32Array(m.an.fftSize);
-  m.cand = null; m.rmsHist = [];
+  m.cand = null; m.rmsHist = []; m.hfHist = [];
 }
 function micPoll() {
   const m = S.mic;
@@ -1095,14 +1096,30 @@ function micPoll() {
   for (let i = n - W; i < n; i++) s += buf[i] * buf[i];
   const rms = Math.sqrt(s / W);
   const now = ctx.currentTime;
-  const gate = Math.pow(10, S.gateDb / 20);
+  // the room's noise level: follows the quietest recent readings, creeps up slowly so a long ring isn't taken for noise
+  if (m.noise == null) m.noise = rms;
+  else m.noise = Math.min(m.noise * 1.004, rms);
+  const gate = Math.max(Math.pow(10, S.gateDb / 20), m.noise * 2.5);
+  m.gate = gate;
 
   m.level = Math.max(rms, m.level * 0.88);
   const gap = m.cand && m.cand.chord ? CHORD_DECIDE + 0.01 : 0.14; // let a strum finish before the next onset
-  // a new note: clearly louder than the quietest of the last few readings
+  // brightness of the sharpest moment in this poll: a pick on a ringing string is a burst of highs even when the loudness barely moves
+  const span = Math.min(n - 1, Math.ceil(ctx.sampleRate * 0.032));
+  let hf = 0;
+  for (let b = n - span; b + 96 <= n; b += 48) {
+    let e = 0;
+    for (let i = b; i < b + 96; i++) { const d = buf[i] - buf[i - 1]; e += d * d; }
+    hf = Math.max(hf, Math.sqrt(e / 96));
+  }
   const hist = m.rmsHist || (m.rmsHist = []);
+  const hfHist = m.hfHist || (m.hfHist = []);
   const floorRms = hist.length ? Math.min.apply(null, hist) : 0;
-  if (rms > gate && rms > floorRms * 1.8 + 0.0015 && now - m.lastOnset > gap) {
+  const floorHf = hfHist.length ? Math.min.apply(null, hfHist) : 0;
+  // a new note: clearly louder than the quietest of the last few readings, or a sudden burst of highs
+  const louder = rms > floorRms * 1.8 + gate * 0.3;
+  const sharper = rms > gate && hf > floorHf * 2.6 + gate * 0.25 && hfHist.length >= 2;
+  if (rms > gate && (louder || sharper) && now - m.lastOnset > gap) {
     m.lastOnset = now;
     const target = targetAt(now);
     const one = target && !TC.isChord(target) ? target.notes[0] : null;
@@ -1113,6 +1130,7 @@ function micPoll() {
   }
   m.prevRms = rms;
   hist.push(rms); if (hist.length > 3) hist.shift();
+  hfHist.push(hf); if (hfHist.length > 3) hfHist.shift();
   if (rms < gate * 0.7) { m.quiet = (m.quiet || 0) + 1; if (m.quiet > 4) { m.lastPitch = null; m.track = null; m.legatoOff = false; } } else m.quiet = 0;
 
   const I = INST();
@@ -1122,6 +1140,20 @@ function micPoll() {
     const need = Math.min(n, 1024 + Math.floor(ctx.sampleRate / I.minF) + 1);
     const r = TC.yin(buf.subarray(n - need), ctx.sampleRate, { minF: I.minF, maxF: I.maxF });
     if (r && r.clarity > 0.8) pitch = r;
+    if (m.cand && !m.cand.chord && !m.cand.dead && !m.cand.bend) {
+      // other strings may be ringing, so ask whether the note we are waiting for is in the signal
+      const tg = targetAt(m.cand.t), nt = tg && !TC.isChord(tg) ? tg.notes[0] : null;
+      if (nt && !nt.dead) {
+        const f = TC.midiToFreq(TC.soundOf(nt));
+        if (f >= I.minF && f <= I.maxF && !(pitch && Math.round(TC.freqToMidi(pitch.freq)) === TC.soundOf(nt))) {
+          const pr = TC.periodicityAt(buf.subarray(n - need), ctx.sampleRate, f);
+          // it counts when the note repeats strongly and clearly more than the notes a step either side
+          let rival = 0;
+          if (pr > 0.4) for (const st of [-2, -1, 1, 2]) rival = Math.max(rival, TC.periodicityAt(buf.subarray(n - need), ctx.sampleRate, f * Math.pow(2, st / 12)));
+          if (pr > 0.4 && pr > rival * 1.2 && pr > (pitch ? 0.6 : 0)) pitch = { freq: f, clarity: pr };
+        }
+      }
+    }
   }
   if (m.cand && m.cand.chord) {
     if (now - m.cand.t >= CHORD_DECIDE) {
@@ -1182,7 +1214,9 @@ function micPoll() {
     const hc = S.hearChord && tn - S.hearChord.t < 1200 ? S.hearChord.name : null;
     $('#hearNote').textContent = hc || (fresh ? TC.midiName(S.hear.midi) : '·');
     $('#hearCents').textContent = hc ? 'chord' : fresh ? (S.hear.cents >= 0 ? '+' : '') + S.hear.cents + '¢' : '';
-    $('#meterFill').style.width = clamp(Math.sqrt(m.level) * 160, 0, 100) + '%';
+    const pos = (x) => clamp((20 * Math.log10(Math.max(x, 1e-5)) + 70) / 60 * 100, 0, 100); // -70 dB .. -10 dB
+    $('#meterFill').style.width = pos(m.level) + '%';
+    $('#meterGate').style.left = pos(m.gate) + '%';
   }
 }
 
@@ -1973,7 +2007,7 @@ function init() {
     S.metro = saved.metro !== false; $('#metro').checked = S.metro;
     if (saved.tol) $('#tol').value = saved.tol;
     if (saved.lat != null) $('#lat').value = saved.lat;
-    if (saved.gate) $('#gate').value = saved.gate;
+    if (saved.gate && saved.gate !== -44) $('#gate').value = saved.gate; // -44 was the old fixed default
     if (saved.zoom) $('#zoom').value = saved.zoom;
     ['trStep', 'trTarget', 'trAcc', 'dMin', 'dMax'].forEach((k) => { if (saved[k]) $('#' + k).value = saved[k]; });
   }

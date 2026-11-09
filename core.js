@@ -311,6 +311,20 @@
 
   /* ---------- Pitch detection (YIN) ---------- */
 
+  /* How strongly the signal repeats at the period of one expected pitch (0..1). Unlike yin() this does not need the
+     expected note to be the only thing sounding, so it still answers while other strings ring. */
+  function periodicityAt(buf, sr, freq) {
+    const t0 = sr / freq, lo = Math.max(2, Math.floor(t0 * 0.983)), hi = Math.ceil(t0 * 1.017);
+    const W = Math.min(1024, buf.length - hi - 1);
+    if (W < 256) return 0;
+    let best = 0;
+    for (let tau = lo; tau <= hi; tau++) {
+      let d = 0, e = 0;
+      for (let j = 0; j < W; j++) { const x = buf[j], y = buf[j + tau]; d += (x - y) * (x - y); e += x * x + y * y; }
+      if (e > 0) best = Math.max(best, 1 - d / e);
+    }
+    return best;
+  }
   function yin(buf, sr, opts) {
     opts = opts || {};
     const minF = opts.minF || 70, maxF = opts.maxF || 1200, thr = opts.threshold || 0.15;
@@ -1180,7 +1194,7 @@
 
   return {
     NOTE_NAMES, STANDARD, BASS, BASS5, INSTRUMENTS, instrumentOf, pcName, midiName, freqToMidi, midiToFreq,
-    parseAsciiTab, tokenizeString, applyTechnique, TECHS, TECHS_FOR, isSlapLine, soundOf, bendLabel, harmonicSound, convertAlphaTab, listGuitarTracks, yin, Grader, generatePhrase, EndlessGen, randomTarget, mulberry32,
+    parseAsciiTab, tokenizeString, applyTechnique, TECHS, TECHS_FOR, isSlapLine, soundOf, bendLabel, harmonicSound, convertAlphaTab, listGuitarTracks, yin, periodicityAt, Grader, generatePhrase, EndlessGen, randomTarget, mulberry32,
     ROOT_NAMES, CHORD_GROUPS, CHORDS, CHORD_TUNE, KEYS, MODES, PROGRESSIONS, Harmony, keysFor, degreeOptions, spellIn, chordName, isChord, pcsOf, randomChord, fftMag, chroma, judgeChord,
   };
 });

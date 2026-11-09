@@ -820,4 +820,17 @@ t('generated slap passages: thumb on the low strings, pop on the high ones, octa
   assert.deepStrictEqual(TC.TECHS_FOR.bass.on, ['slide', 'legato', 'slap', 'ghost']);
 });
 
+t('periodicityAt: finds a note among other ringing notes, and not a neighbouring pitch', () => {
+  const sr = 44100, N = 4096, buf = new Float32Array(N);
+  const f = (m) => 440 * Math.pow(2, (m - 69) / 12);
+  // A3 (57) plays loudest while E2 (40) and E3 (52) ring underneath
+  const tone = (m, a, i) => { let v = 0; for (let h = 1; h <= 6; h++) v += Math.sin(2 * Math.PI * f(m) * h * i / sr) * a / h; return v; }; // a plucked string has strong harmonics
+  for (let i = 0; i < N; i++) buf[i] = tone(57, 0.5, i) + tone(40, 0.3, i) + tone(52, 0.3, i);
+  const at = TC.periodicityAt(buf, sr, f(57));
+  assert.ok(at > 0.3 && at > 3 * TC.periodicityAt(buf, sr, f(59)) && at > TC.periodicityAt(buf, sr, f(58)), 'in the mix ' + at);
+  for (let i = 0; i < N; i++) buf[i] = tone(57, 0.5, i);
+  const alone = TC.periodicityAt(buf, sr, f(57));
+  assert.ok(alone > 0.95 && alone > TC.periodicityAt(buf, sr, f(56)) && alone > TC.periodicityAt(buf, sr, f(58)), 'alone ' + alone);
+});
+
 console.log(`\n${n} test groups passed`);
