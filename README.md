@@ -33,6 +33,16 @@ The microphone only works on `https://` pages or `http://localhost`, so serve th
 - **Drills**: find the fret on your guitar (mic) or name the note, plus random phrases for sight-reading.
 - **Input**: paste ASCII tab (6 lines for guitar, 4 or 5 for bass, highest string first) or import Guitar Pro files (.gp3/.gp4/.gp5/.gpx/.gp).
 
+## On a phone
+
+Open the published page (https, e.g. GitHub Pages) in the phone's browser and allow the microphone.
+
+- The layout stacks to one column, buttons and chips are finger-sized, and inputs don't trigger the iPhone zoom.
+- The screen stays on while you play or drill (where the browser supports it).
+- Starting a run or loading a tab scrolls the tab back into view.
+- **Full screen** shows only the tab and the play controls; tap the tab to play or pause. Turn the phone sideways to see more beats ahead.
+- iPhone: sound from *Hear the tab* and the click follows the ring/silent switch, and with the mic on, iOS may play it through the earpiece; headphones avoid both.
+
 ## Files
 
 - `index.html` UI and transport
